@@ -36,9 +36,12 @@ export interface WardrobeItem {
 }
 
 export interface OutfitSuggestion {
+  id?: string;
   name: string;
   itemIds: string[];
   reasoning: string;
+  score?: number;
+  occasion?: string;
 }
 
 export interface ChatMessage {
