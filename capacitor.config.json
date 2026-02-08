@@ -1,0 +1,6 @@
+{
+    "appId": "com.styaile.ai",
+    "appName": "StyAiLe",
+    "webDir": "dist",
+    "bundledWebRuntime": false
+}

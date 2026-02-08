@@ -1,0 +1,7 @@
+{
+  "name": "WardrobeAI",
+  "description": "Your personal AI stylist. Upload your clothes, organize your closet, and get outfit recommendations for any occasion using Gemini 2.5 and 3.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
