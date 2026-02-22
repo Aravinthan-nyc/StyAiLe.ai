@@ -35,7 +35,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
                 <div className={`mb-6 transform transition-all duration-1000 ${stage >= 1 ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-10 opacity-0 scale-90'}`}>
                     <div className="relative inline-block">
                         <img
-                            src="/logo.png"
+                            src="/image.png"
                             alt="StyAiLe.ai Logo"
                             className="w-40 h-40 object-contain drop-shadow-[0_0_35px_rgba(255,255,255,0.4)]"
                         />

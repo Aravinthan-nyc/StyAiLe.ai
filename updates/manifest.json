@@ -1,0 +1,12 @@
+{
+    "version": "1.0.1",
+    "buildNumber": 2,
+    "releaseDate": "2026-02-15",
+    "bundleUrl": "https://your-project.supabase.co/storage/v1/object/public/updates/bundles/v1.0.1.zip",
+    "bundleSize": 2048576,
+    "bundleHash": "",
+    "mandatory": false,
+    "changelog": "Bug fixes and improvements:\n- Fixed Weekly Planner not showing outfits\n- Improved Analytics dashboard performance\n- Enhanced security measures\n- Minor UI improvements",
+    "minAppVersion": "1.0.0",
+    "actions": []
+}

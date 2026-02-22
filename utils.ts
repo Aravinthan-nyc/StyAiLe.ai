@@ -4,14 +4,14 @@
  * No URLs, no file paths, no metadata - only pure image bytes.
  */
 
-// Minimum file size (10 KB)
-const MIN_FILE_SIZE = 10 * 1024;
+// Minimum file size (1 KB)
+const MIN_FILE_SIZE = 1 * 1024;
 // Maximum dimension for resizing
 const MAX_DIMENSION = 1024;
-// Minimum output base64 length (corresponds to ~7.5 KB binary)
-const MIN_BASE64_LENGTH = 10000;
-// Minimum binary size after processing (20 KB)
-const MIN_BINARY_SIZE = 20 * 1024;
+// Minimum output base64 length (corresponds to ~1.5 KB binary)
+const MIN_BASE64_LENGTH = 2000;
+// Minimum binary size after processing (2 KB)
+const MIN_BINARY_SIZE = 2 * 1024;
 // JPEG quality for compression
 const JPEG_QUALITY = 0.85;
 

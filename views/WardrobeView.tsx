@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { WardrobeItem, ClothingCategory } from '../types';
-import { Plus, Search, X, Shirt, Sparkles, Lock, Unlock, Clock, Trash2 } from '../components/Icons';
+import { WatchAdModal } from '../components/WatchAdModal';
+import { supabase } from '../services/supabaseClient';
+import { Plus, Search, X, Shirt, Sparkles, Lock, Unlock, Clock, Trash2, Menu } from '../components/Icons';
 import { isItemLocked, getLockStatusText } from '../services/lockService';
 
 interface WardrobeViewProps {
@@ -10,6 +12,7 @@ interface WardrobeViewProps {
     onAskStylist?: (selectedItems: WardrobeItem[]) => void;
     onLockItem?: (id: string, days?: number) => void;
     onUnlockItem?: (id: string) => void;
+    onOpenSidebar?: () => void;
 }
 
 const categoryOrder = [
@@ -30,7 +33,15 @@ const getCategoryBadgeClass = (category: ClothingCategory): string => {
 
 const LONG_PRESS_DURATION = 500; // ms
 
-const WardrobeView: React.FC<WardrobeViewProps> = ({ items, onDeleteItem, onAddClick, onAskStylist, onLockItem, onUnlockItem }) => {
+const WardrobeView: React.FC<WardrobeViewProps> = ({
+    items,
+    onDeleteItem,
+    onAddClick,
+    onAskStylist,
+    onLockItem,
+    onUnlockItem,
+    onOpenSidebar
+}) => {
     const [activeCategory, setActiveCategory] = useState<string>('All');
     const [selectedItem, setSelectedItem] = useState<WardrobeItem | null>(null);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -124,25 +135,85 @@ const WardrobeView: React.FC<WardrobeViewProps> = ({ items, onDeleteItem, onAddC
         );
     }
 
+
+    // AdMob Integration
+    const [showAdModal, setShowAdModal] = useState(false);
+    const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+
+    const checkCreditsAndProceed = async (cost: number, action: () => void) => {
+        // Optimistic check (real check happens on server)
+        // For MVP, we'll assume we need to check local state or fetch fresh
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('credits')
+            .eq('id', user.id)
+            .single();
+
+        const currentCredits = profile?.credits || 0;
+
+        if (currentCredits < cost) {
+            setPendingAction(() => action);
+            setShowAdModal(true);
+        } else {
+            action();
+        }
+    };
+
+    const handleAdReward = () => {
+        // Credits added by service.
+        // Retry the pending action
+        if (pendingAction) {
+            pendingAction();
+            setPendingAction(null);
+        }
+    };
+
     return (
-        <div className="min-h-screen pb-28 pt-4">
+        <div className="min-h-screen bg-black text-white pb-20">
             {/* Header */}
-            <div className="sticky top-0 bg-[#050505]/80 backdrop-blur-xl z-20 px-4 pt-2 pb-4 border-b border-white/5">
-                <div className="flex items-center justify-between mb-6">
+            <div className="sticky top-0 z-20 bg-black/80 backdrop-blur-xl border-b border-white/5 px-4 py-4">
+                <div className="flex items-center justify-between mb-4">
                     <div>
-                        <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">Wardrobe</h1>
-                        <p className="text-sm text-gray-500 font-medium tracking-wide mt-1">{items.length} ITEMS COLLECTED</p>
+                        <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">My Wardrobe</h1>
+                        <p className="text-xs text-gray-400">{items.length} items • {filteredItems.length} shown</p>
                     </div>
-                    <button
-                        onClick={onAddClick}
-                        className="w-12 h-12 flex items-center justify-center bg-white text-black rounded-full shadow-lg shadow-white/10 btn-press hover:bg-gray-200 transition-colors"
-                    >
-                        <Plus size={24} />
-                    </button>
+
+                    <div className="flex items-center gap-3">
+                        {/* Ask Stylist Button (Small) */}
+                        {selectedIds.size > 0 && (
+                            <button
+                                onClick={() => onAskStylist?.(items.filter(i => selectedIds.has(i.id)))}
+                                className="p-2 bg-blue-600/20 text-blue-400 rounded-full hover:bg-blue-600/30 transition-colors border border-blue-600/30"
+                            >
+                                <Sparkles size={20} />
+                            </button>
+                        )}
+
+                        {/* Add Item Button */}
+                        <button
+                            onClick={onAddClick}
+                            className="p-2 bg-white/10 text-white rounded-full hover:bg-white/20 transition-colors border border-white/10"
+                        >
+                            <Plus size={20} />
+                        </button>
+
+                        {/* Sidebar Toggle - Top Right */}
+                        {onOpenSidebar && (
+                            <button
+                                onClick={onOpenSidebar}
+                                className="p-2 bg-white/5 text-gray-300 rounded-full hover:bg-white/15 transition-colors border border-white/10"
+                            >
+                                <Menu size={20} />
+                            </button>
+                        )}
+                    </div>
                 </div>
 
-                {/* Category Tabs */}
-                <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
+                {/* Categories */}
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2 mask-linear">
                     {categoryOrder.map(cat => {
                         const count = categoryCounts[cat] || 0;
                         if (cat !== 'All' && count === 0) return null;
@@ -151,139 +222,196 @@ const WardrobeView: React.FC<WardrobeViewProps> = ({ items, onDeleteItem, onAddC
                             <button
                                 key={cat}
                                 onClick={() => setActiveCategory(cat)}
-                                className={`flex-shrink-0 px-5 py-2.5 rounded-full text-sm font-semibold transition-all duration-300 btn-press
-                  ${isActive
-                                        ? 'bg-white text-black shadow-md'
-                                        : 'bg-white/5 text-gray-400 border border-white/5 hover:bg-white/10'
+                                className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all border
+                                ${isActive
+                                        ? 'bg-white text-black border-white shadow-[0_0_15px_rgba(255,255,255,0.3)]'
+                                        : 'bg-white/5 text-gray-400 border-white/5 hover:bg-white/10 hover:border-white/20'
                                     }`}
                             >
-                                {cat} <span className={`ml-1 text-xs ${isActive ? 'text-black/60' : 'text-gray-600'}`}>({count})</span>
+                                {cat === 'All' ? 'All Items' : cat}
+                                {count > 0 && (
+                                    <span className={`ml-2 text-xs ${isActive ? 'text-black/60' : 'text-gray-600'}`}>
+                                        {count}
+                                    </span>
+                                )}
                             </button>
                         );
                     })}
                 </div>
             </div>
 
-            {/* Items Grid */}
-            <div className="px-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
-                    {filteredItems.map((item, index) => {
-                        const isSelected = selectedIds.has(item.id);
-                        return (
-                            <div
-                                key={item.id}
-                                onClick={() => handleItemClick(item)}
-                                onMouseDown={() => handlePressStart(item.id)}
-                                onMouseUp={handlePressEnd}
-                                onMouseLeave={handlePressEnd}
-                                onTouchStart={() => handlePressStart(item.id)}
-                                onTouchEnd={handlePressEnd}
-                                className={`group relative glass-card rounded-3xl overflow-hidden cursor-pointer animate-slide-up transition-all duration-300
-                                    ${isSelected ? 'ring-2 ring-primary border-transparent' : 'border-white/5 hover:border-white/20'}`}
-                                style={{ animationDelay: `${index * 0.05}s` }}
-                            >
-                                {/* Selection indicator */}
-                                {isSelectMode && (
-                                    <div className={`absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center z-10 transition-all shadow-lg
-                                        ${isSelected ? 'bg-primary text-black scale-110' : 'bg-black/50 border border-white/30 backdrop-blur-sm'}`}>
-                                        {isSelected && <div className="w-2 h-2 bg-white rounded-full" />}
-                                    </div>
-                                )}
+            <div className="p-4 space-y-6">
+                {/* Empty State */}
+                {filteredItems.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center animate-fade-in">
+                        <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-4 border border-white/10">
+                            <Shirt size={32} className="text-gray-600" />
+                        </div>
+                        <h3 className="text-lg font-medium text-white mb-2">My Closet is Empty</h3>
+                        <p className="text-sm text-gray-500 max-w-xs mx-auto mb-6">
+                            Start building your digital wardrobe by adding your favorite clothes.
+                        </p>
+                        <button
+                            onClick={onAddClick}
+                            className="px-6 py-3 bg-white text-black rounded-full font-bold hover:bg-gray-200 transition-colors flex items-center gap-2"
+                        >
+                            <Plus size={18} />
+                            Add First Item
+                        </button>
+                    </div>
+                ) : (
+                    /* Grid */
+                    <div className="grid grid-cols-2 gap-4 pb-20">
+                        {filteredItems.map((item, index) => {
+                            const isSelected = selectedIds.has(item.id);
+                            const locked = isItemLocked(item);
+                            const wearCount = item.wearCount || 0;
 
-                                <div className="aspect-[4/5] overflow-hidden bg-[#111] relative">
+                            return (
+                                <div
+                                    key={item.id}
+                                    onClick={() => handleItemClick(item)}
+                                    onMouseDown={() => handlePressStart(item.id)}
+                                    onMouseUp={handlePressEnd}
+                                    onMouseLeave={handlePressEnd}
+                                    onTouchStart={() => handlePressStart(item.id)}
+                                    onTouchEnd={handlePressEnd}
+                                    className={`group relative aspect-[3/4] rounded-2xl overflow-hidden cursor-pointer transition-all duration-300
+                                        ${isSelected ? 'ring-2 ring-white scale-[0.98]' : 'hover:scale-[1.02]'}
+                                    `}
+                                >
+                                    {/* Image */}
                                     <img
                                         src={item.imageData}
                                         alt={item.description}
-                                        className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 ${isSelected ? 'opacity-60' : 'opacity-90'}`}
+                                        className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 
+                                            ${locked ? 'opacity-50 grayscale-[0.5]' : 'opacity-100'}
+                                        `}
                                     />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
 
+                                    {/* Gradient Overlay */}
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-80" />
+
+                                    {/* Locked State */}
+                                    {locked && (
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-2 border border-white/10">
+                                                <Lock size={12} className="text-red-400" />
+                                                <span className="text-xs font-medium text-white/90">Planned</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Selection Check */}
+                                    {isSelectMode && (
+                                        <div className={`absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center border transition-all
+                                            ${isSelected ? 'bg-white border-white' : 'bg-black/40 border-white/40 backdrop-blur-sm'}
+                                        `}>
+                                            {isSelected && <div className="w-2.5 h-2.5 bg-black rounded-full" />}
+                                        </div>
+                                    )}
+
+                                    {/* Item Info */}
                                     <div className="absolute bottom-3 left-3 right-3">
-                                        <p className="text-white text-sm font-medium truncate">{item.description}</p>
-                                        <p className="text-xs text-gray-400 mt-0.5 capitalize">{item.category.toLowerCase()}</p>
+                                        <p className="text-sm font-medium text-white truncate">{item.description}</p>
+                                        <div className="flex items-center justify-between mt-1">
+                                            <span className="text-xs text-gray-400 capitalize">{item.category}</span>
+                                            {wearCount > 0 && (
+                                                <span className="text-[10px] bg-white/10 px-1.5 py-0.5 rounded text-gray-300">
+                                                    {wearCount}x
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        );
-                    })}
-                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
 
-            {/* Ask Stylist FAB */}
-            {isSelectMode && selectedIds.size > 0 && onAskStylist && (
-                <div className="fixed bottom-24 left-0 right-0 flex justify-center z-40 animate-slide-up px-6">
-                    <div className="flex items-center gap-3 p-2 bg-[#1a1a1a]/90 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl shadow-black/50 pl-6 pr-2">
-                        <span className="text-white font-medium text-sm whitespace-nowrap">{selectedIds.size} Selected</span>
-
+            {/* FAB for Multi-Select Actions */}
+            {selectedIds.size > 0 && !selectedItem && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 z-30 animate-slide-up">
+                    <div className="bg-black/80 backdrop-blur-xl border border-white/10 rounded-full px-6 py-3 flex items-center gap-4 shadow-2xl">
+                        <span className="text-sm font-medium text-white">{selectedIds.size} selected</span>
+                        <div className="h-4 w-px bg-white/20" />
                         <button
-                            onClick={exitSelectMode}
-                            className="w-10 h-10 flex items-center justify-center bg-white/10 rounded-full text-white hover:bg-white/20 transition-colors"
-                        >
-                            <X size={18} />
-                        </button>
-
-                        <button
-                            onClick={handleAskStylist}
-                            className="px-6 py-3 bg-white text-black rounded-full font-bold text-sm shadow-lg flex items-center gap-2 hover:bg-gray-100 transition-colors btn-press"
+                            onClick={() => onAskStylist?.(items.filter(i => selectedIds.has(i.id)))}
+                            className="text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-2 text-sm font-bold"
                         >
                             <Sparkles size={16} />
-                            Ask AI
+                            Ask Stylist
+                        </button>
+                        <button
+                            onClick={() => {
+                                setIsSelectMode(false);
+                                setSelectedIds(new Set());
+                            }}
+                            className="text-gray-400 hover:text-white transition-colors"
+                        >
+                            <X size={18} />
                         </button>
                     </div>
                 </div>
             )}
 
-            {/* Item Detail Modal */}
+            {/* Selection Modal */}
             {selectedItem && (
-                <div
-                    className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end justify-center animate-fade-in"
-                    onClick={() => setSelectedItem(null)}
-                >
-                    <div
-                        className="bg-[#121212] w-full max-w-xl rounded-t-[40px] border-t border-white/10 shadow-[0_-10px_40px_rgba(0,0,0,1)] animate-slide-up overflow-hidden"
-                        onClick={e => e.stopPropagation()}
-                    >
-                        <div className="p-6">
-                            {/* Drag Handle */}
-                            <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mb-8" />
-
-                            <div className="flex gap-6 mb-8">
-                                <div className="w-1/3 aspect-[3/4] rounded-2xl overflow-hidden bg-[#222] shadow-inner border border-white/5">
-                                    <img
-                                        src={selectedItem.imageData}
-                                        alt={selectedItem.description}
-                                        className="w-full h-full object-cover"
-                                    />
-                                </div>
-                                <div className="flex-1">
-                                    <div className="flex items-start justify-between">
-                                        <div>
-                                            <div className="inline-block px-3 py-1 rounded-full text-xs font-bold bg-white/10 text-white mb-3">
-                                                {selectedItem.category.toUpperCase()}
-                                            </div>
-                                            <h3 className="text-xl font-bold text-white mb-2 leading-tight">{selectedItem.description}</h3>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex gap-2 mt-4">
-                                        {selectedItem.colors.map((color, i) => (
-                                            <span key={i} className="px-3 py-1 bg-white/5 border border-white/5 rounded-full text-xs text-gray-300 capitalize">
-                                                {color}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
+                <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 pb-24 sm:p-0">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm transition-opacity" onClick={() => setSelectedItem(null)} />
+                    <div className="relative bg-[#111] border border-white/10 w-full max-w-sm rounded-[2rem] overflow-hidden shadow-2xl animate-slide-up">
+                        <div className="aspect-square relative">
+                            <img src={selectedItem.imageData} alt="" className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-90" />
+                            <button
+                                onClick={() => setSelectedItem(null)}
+                                className="absolute top-4 right-4 p-2 bg-black/40 backdrop-blur-md rounded-full text-white border border-white/10"
+                            >
+                                <X size={20} />
+                            </button>
+                            <div className="absolute bottom-6 left-6 right-6">
+                                <h3 className="text-2xl font-bold text-white mb-1">{selectedItem.description}</h3>
+                                <p className="text-gray-400 capitalize">
+                                    {selectedItem.category} • {selectedItem.colors ? selectedItem.colors.join(', ') : ''}
+                                </p>
                             </div>
+                        </div>
+
+                        <div className="p-6 grid grid-cols-2 gap-3">
+                            {isItemLocked(selectedItem) ? (
+                                <button
+                                    onClick={() => {
+                                        onUnlockItem?.(selectedItem.id);
+                                        setSelectedItem(null);
+                                    }}
+                                    className="col-span-1 py-4 bg-green-500/10 border border-green-500/20 text-green-400 rounded-2xl font-medium flex flex-col items-center gap-2 hover:bg-green-500/20 transition-all"
+                                >
+                                    <Unlock size={24} />
+                                    <span className="text-xs">Unlock Item</span>
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={() => {
+                                        onLockItem?.(selectedItem.id, 7);
+                                        setSelectedItem(null);
+                                    }}
+                                    className="col-span-1 py-4 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-2xl font-medium flex flex-col items-center gap-2 hover:bg-blue-500/20 transition-all"
+                                >
+                                    <Clock size={24} />
+                                    <span className="text-xs">Laundry (7d)</span>
+                                </button>
+                            )}
 
                             <button
                                 onClick={() => {
                                     onDeleteItem(selectedItem.id);
                                     setSelectedItem(null);
                                 }}
-                                className="w-full py-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl font-semibold flex items-center justify-center gap-2 btn-press hover:bg-red-500/20 transition-all"
+                                className="col-span-1 py-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl font-medium flex flex-col items-center gap-2 hover:bg-red-500/20 transition-all"
                             >
-                                <X size={20} />
-                                Remove Item
+                                <Trash2 size={24} />
+                                <span className="text-xs">Delete</span>
                             </button>
                         </div>
                     </div>

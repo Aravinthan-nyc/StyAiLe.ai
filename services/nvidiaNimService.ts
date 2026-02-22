@@ -1,19 +1,4 @@
-/**
- * NVIDIA NIM Service
- * Uses nemotron-nano-12b-v2-vl for image analysis and context-aware chat
- */
-
-const NVIDIA_API_KEY = import.meta.env.VITE_NVIDIA_API_KEY || '';
-const NVIDIA_MODEL = import.meta.env.VITE_NVIDIA_MODEL || 'meta/llama-3.2-11b-vision-instruct';
-// Use Vite proxy to bypass CORS - requests to /api/nvidia are proxied to https://integrate.api.nvidia.com
-const NVIDIA_API_BASE = '/api/nvidia/v1';
-
-// Log API key status for debugging
-if (!NVIDIA_API_KEY) {
-    console.warn('⚠️ NVIDIA API not configured. AI features will be limited until you add credentials in Settings.');
-} else {
-    console.log('✅ NVIDIA API key loaded successfully');
-}
+import { supabase } from "./supabaseClient";
 
 /**
  * AI Analysis result from image analysis
@@ -28,7 +13,7 @@ export interface AIAnalysisResult {
 }
 
 /**
- * Analyze a clothing image using NVIDIA NIM
+ * Analyze a clothing image using NVIDIA NIM (via Supabase Edge Function)
  * @param base64Image - Base64 encoded image (with or without data URL prefix)
  * @returns AI analysis of the clothing item
  */
@@ -56,64 +41,34 @@ Be specific and accurate.
 
     const userPrompt = 'Analyze this clothing item and provide a detailed JSON analysis.';
 
-    console.log('🔍 NVIDIA NIM: Starting image analysis...');
-    console.log('📊 API Base:', NVIDIA_API_BASE);
-    console.log('🤖 Model:', NVIDIA_MODEL);
-    console.log('🔑 API Key present:', !!NVIDIA_API_KEY);
-    console.log('🔑 API Key (first 20 chars):', NVIDIA_API_KEY.substring(0, 20) + '...');
-
     try {
-        const requestBody = {
-            model: NVIDIA_MODEL,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: userPrompt },
-                        { type: 'image_url', image_url: { url: imageData } }
-                    ]
-                }
-            ],
-            max_tokens: 500,
-            temperature: 0.3,
-        };
+        console.log('🔍 NVIDIA NIM (Secure): Invoking Edge Function...');
 
-        console.log('📤 Request body:', JSON.stringify(requestBody, null, 2).substring(0, 500) + '...');
-
-        const response = await fetch(`${NVIDIA_API_BASE}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${NVIDIA_API_KEY}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestBody),
+        // Call Supabase Function
+        const { data, error } = await supabase.functions.invoke('generate-outfit', {
+            body: {
+                provider: 'nvidia',
+                model: 'meta/llama-3.2-11b-vision-instruct',
+                prompt: JSON.stringify({
+                    system: systemPrompt,
+                    user: userPrompt,
+                    image: imageData // Pass image if needed by backend logic
+                }),
+                cost: 2 // Higher cost for Vision model
+            }
         });
 
-        console.log('📡 Response Status:', response.status, response.statusText);
-        console.log('📡 Response Headers:', JSON.stringify(Object.fromEntries(response.headers.entries())));
+        if (error) throw error;
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('❌ NVIDIA API Error Response:', errorText);
-            throw new Error(`NVIDIA API error (${response.status}): ${errorText.substring(0, 300)}`);
-        }
-
-        const data = await response.json();
-        console.log('✅ Full API Response:', JSON.stringify(data, null, 2));
-
+        // Parse response (assuming edge function returns standard format)
+        // Note: The edge function should handle the specific provider response format mapping
+        // For MVP, we presume the edge function returns the direct provider response
         const content = data.choices?.[0]?.message?.content || '';
-        console.log('📝 AI Content:', content);
 
-        // Parse JSON from response
         const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-            console.error('❌ No JSON found in response. Full content:', content);
-            throw new Error(`AI did not return valid JSON. Response was: ${content.substring(0, 200)}`);
-        }
+        if (!jsonMatch) throw new Error("No JSON in response");
 
         const analysis = JSON.parse(jsonMatch[0]);
-        console.log('✅ Parsed Analysis:', analysis);
 
         return {
             summary: analysis.summary || 'Clothing item',
@@ -123,13 +78,9 @@ Be specific and accurate.
             fabricGuess: analysis.fabricGuess,
             timestamp: Date.now(),
         };
-    } catch (error: any) {
-        console.error('❌ NVIDIA NIM Complete Error Details:');
-        console.error('  - Error Name:', error.name);
-        console.error('  - Error Message:', error.message);
-        console.error('  - Error Stack:', error.stack);
 
-        // Throw the error so it shows in the UI
+    } catch (error: any) {
+        console.error('AI Analysis Failed:', error);
         throw new Error(`AI Analysis Failed: ${error.message}`);
     }
 }
@@ -188,32 +139,23 @@ ${contextText}
 - IF 2+ items selected: Judge the combination strictly.`;
 
     try {
-        const response = await fetch(`${NVIDIA_API_BASE}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${NVIDIA_API_KEY}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                model: NVIDIA_MODEL,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: question }
-                ],
-                max_tokens: 800,
-                temperature: 0.7,
-            }),
+        console.log('🔍 NVIDIA NIM (Secure): Invoking Edge Function for Chat...');
+        // Call Supabase Function
+        const { data, error } = await supabase.functions.invoke('generate-outfit', {
+            body: {
+                provider: 'nvidia',
+                model: 'meta/llama-3.2-11b-vision-instruct', // Or a chat model if preferred
+                prompt: JSON.stringify({
+                    system: systemPrompt,
+                    user: question
+                }),
+                cost: 1
+            }
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('NVIDIA API error:', response.status, errorText);
-            throw new Error(`NVIDIA API error: ${response.status}`);
-        }
+        if (error) throw error;
 
-        const data = await response.json();
         const content = data.choices?.[0]?.message?.content || '';
-
         return content || "I'm here to help with your style questions!";
     } catch (error: any) {
         console.error('Error in AI chat:', error);
@@ -271,28 +213,22 @@ Rules:
 - **Honesty**: If the user has limited items that don't match well, acknowledge it in the 'reasoning'.`;
 
     try {
-        const response = await fetch(`${NVIDIA_API_BASE}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${NVIDIA_API_KEY}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                model: NVIDIA_MODEL,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `Create outfit suggestions for: ${occasion}` }
-                ],
-                max_tokens: 1000,
-                temperature: 0.7,
-            }),
+        console.log('🔍 NVIDIA NIM (Secure): Invoking Edge Function for Suggestions...');
+
+        const { data, error } = await supabase.functions.invoke('generate-outfit', {
+            body: {
+                provider: 'nvidia',
+                model: 'meta/llama-3.2-11b-vision-instruct',
+                prompt: JSON.stringify({
+                    system: systemPrompt,
+                    user: `Create outfit suggestions for: ${occasion}`
+                }),
+                cost: 3
+            }
         });
 
-        if (!response.ok) {
-            throw new Error(`NVIDIA API error: ${response.status}`);
-        }
+        if (error) throw error;
 
-        const data = await response.json();
         const content = data.choices?.[0]?.message?.content || '';
 
         // Parse JSON from response

@@ -1,124 +1,54 @@
-/**
- * Unified AI Service
- * Provides a single interface for all AI calls using Gemini API
- * Reads API key from localStorage (configured in Settings)
- */
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { CreditService } from './creditService';
 
-import { GoogleGenAI } from "@google/genai";
-import { ClothingCategory, WardrobeItem, OutfitSuggestion } from "../types";
-
-// Storage key for API keys (same as SettingsView)
-const STORAGE_KEY = 'styaile_api_keys';
-
-// Models to try in order (fallback chain)
-const MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
-
-/**
- * Get API key from localStorage
- */
-function getApiKey(): string {
-    try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-            const keys = JSON.parse(stored);
-            return keys.gemini || '';
-        }
-    } catch (e) {
-        console.warn('Could not load API key from localStorage:', e);
-    }
-    return '';
-}
-
-/**
- * Check if the Gemini API is configured
- */
-export function isApiConfigured(): boolean {
-    return !!getApiKey();
-}
-
-/**
- * Create a new GoogleGenAI instance with the current API key
- */
-function getGenAI(): GoogleGenAI | null {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-        console.warn('⚠️ Gemini API not configured. Please add your API key in Settings.');
-        return null;
-    }
+// Initialize Gemini
+// We need to handle the case where the API key is not yet set
+const getGenAI = () => {
+    const apiKey = localStorage.getItem('gemini_api_key');
+    if (!apiKey) return null;
     return new GoogleGenAI({ apiKey });
+};
+
+// --- Model Configuration with Fallback ---
+const MODELS = [
+    "gemini-2.0-flash", // primary (fastest, cheapest)
+    "gemini-1.5-flash", // backup
+    "gemini-1.5-pro"    // distinct fallback
+];
+
+let workingModel: string | null = null;
+const CACHE_KEY_MODEL = 'styaile_working_model';
+
+// Helper to get cached working model
+const getCachedModel = () => {
+    if (workingModel) return workingModel;
+    return localStorage.getItem(CACHE_KEY_MODEL);
 }
 
-// Storage key for cached working model
-const CACHED_MODEL_KEY = 'styaile_working_model';
+const cacheWorkingModel = (model: string) => {
+    workingModel = model;
+    localStorage.setItem(CACHE_KEY_MODEL, model);
+}
 
-/**
- * Get the last working model from cache
- */
-function getCachedModel(): string | null {
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
     try {
-        return localStorage.getItem(CACHED_MODEL_KEY);
-    } catch (e) {
-        return null;
-    }
-}
+        return await fn();
+    } catch (error: any) {
+        if (retries === 0) throw error;
 
-/**
- * Save the working model to cache
- */
-function cacheWorkingModel(model: string): void {
-    try {
-        localStorage.setItem(CACHED_MODEL_KEY, model);
-        console.log(`✅ Cached working model: ${model}`);
-    } catch (e) {
-        console.warn('Could not cache working model:', e);
-    }
-}
-
-/**
- * Smart retry with aggressive backoff for rate limits
- * - Retries up to 5 times for rate limit errors
- * - Uses exponential backoff (2s, 4s, 8s, 16s, 32s)
- * - Only retries on rate limit errors, fails fast on other errors
- */
-async function retryWithBackoff<T>(
-    fn: () => Promise<T>,
-    maxRetries: number = 5,
-    baseDelay: number = 2000
-): Promise<T> {
-    let lastError: any;
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            return await fn();
-        } catch (error: any) {
-            lastError = error;
-            const isRateLimit = error?.message?.includes("429") ||
-                error?.status === 429 ||
-                error?.message?.toLowerCase().includes("rate") ||
-                error?.message?.toLowerCase().includes("quota") ||
-                error?.message?.toLowerCase().includes("resource");
-
-            // Only retry on rate limit errors
-            if (isRateLimit && attempt < maxRetries - 1) {
-                const delay = baseDelay * Math.pow(2, attempt); // Exponential: 2s, 4s, 8s, 16s, 32s
-                console.log(`⏳ Rate limited. Waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries - 1}...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-                // For non-rate-limit errors or final retry, throw immediately
-                throw error;
-            }
+        // Only retry on 429 (Rate Limit) or 503 (Service Unavailable)
+        if (error?.status === 429 || error?.status === 503 || error?.message?.includes('429')) {
+            console.warn(`⚠️ API rate limit hit. Retrying in ${delay}ms... (${retries} left)`);
+            await sleep(delay);
+            return retryWithBackoff(fn, retries - 1, delay * 2);
         }
+
+        throw error;
     }
-    throw lastError;
 }
 
-/**
- * Smart model fallback with caching
- * - Tries cached model first (if available)
- * - On success, caches the working model
- * - Only falls back to other models after exhausting retries
- * - Retries each model multiple times before giving up
- */
 async function generateWithSmartFallback(genAI: GoogleGenAI, config: any): Promise<any> {
     const cachedModel = getCachedModel();
     let modelsToTry = [...MODELS];
@@ -166,53 +96,53 @@ async function generateWithSmartFallback(genAI: GoogleGenAI, config: any): Promi
     throw lastError;
 }
 
-
-
-/**
- * AI Analysis result from image analysis
- */
-export interface AIAnalysisResult {
-    summary: string;
-    detectedType: string;
-    styleParams: string[];
-    detectedColors: string[];
-    fabricGuess?: string;
-    timestamp: number;
+export interface ContextItem {
+    id: string;
+    description: string;
+    category: string;
+    colors: string[];
+    summary?: string;
 }
 
 /**
  * Analyze a clothing image using Gemini Vision
- * @param base64Image - Base64 encoded image (with or without data URL prefix)
- * @returns AI analysis of the clothing item
+ * @param base64Image - The image data
+ * @returns Analysis result including description, category, colors, etc.
  */
-export async function analyzeClothingImage(base64Image: string): Promise<AIAnalysisResult> {
+export async function analyzeClothingImage(base64Image: string): Promise<any> {
     const genAI = getGenAI();
     if (!genAI) {
-        throw new Error('Please configure your Gemini API key in Settings to use AI features.');
+        throw new Error('API Key not found. Please set your Gemini API key in Settings.');
     }
 
-    // Ensure base64 has proper format
-    const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
+    // Check Credits (1 credit for analysis)
+    const cost = 1;
+    const hasCredits = await CreditService.deductCredits(cost, 'analysis');
 
-    const prompt = `You are a fashion expert AI. Analyze clothing items in images and provide detailed, structured analysis.
+    if (!hasCredits) {
+        throw new Error('Insufficient credits. Please watch an ad to earn more!');
+    }
 
-Your response MUST be valid JSON with this exact structure:
-{
-  "summary": "A comprehensive 2-3 sentence description of the clothing item",
-  "detectedType": "The type of clothing (e.g., shirt, pants, dress, jacket, shoes)",
-  "styleParams": ["Array of style descriptors like retro, casual, formal, vintage, modern, streetwear"],
-  "detectedColors": ["Array of colors present in the item"],
-  "fabricGuess": "Best guess at the fabric (e.g., cotton, denim, silk, polyester)"
-}
-
-Be specific and accurate.
-- Detect Indian ethnic wear specifically (e.g., "Kurti", "Saree", "Lehenga", "Sherwani", "Dupatta").
-- If it's a mix (e.g., Kurti with Jeans), label it "Indo-Western".
-- Include details about patterns, cuts, and distinctive features in the summary.`;
-
-    console.log('🔍 Gemini: Starting image analysis...');
+    const prompt = `Analyze this clothing item in detail for a fashion app.
+    Return ONLY valid JSON with this exact structure:
+    {
+        "description": "Detailed description of the item including materials, texture, pattern",
+        "category": "One of: Tops, Bottoms, Shoes, Outerwear, Accessories, Dresses",
+        "colors": ["list", "of", "dominant", "colors"],
+        "styleTags": ["list", "of", "relevant", "style", "tags", "e.g. casual, boho, formal"],
+        "occasions": ["list", "of", "suitable", "occasions"],
+        "weather": ["list", "of", "suitable", "seasons"],
+        "brandGuess": "Guess the brand if visible, else null"
+    }`;
 
     try {
+        console.log('🔍 Gemini: Starting image analysis...');
+
+        // Fix base64 string if needed
+        const cleanBase64 = base64Image.includes('base64,')
+            ? base64Image.split('base64,')[1]
+            : base64Image;
+
         const response = await generateWithSmartFallback(genAI, {
             contents: [
                 {
@@ -222,65 +152,38 @@ Be specific and accurate.
                         {
                             inlineData: {
                                 mimeType: "image/jpeg",
-                                data: base64Data,
-                            },
-                        },
-                    ],
-                },
+                                data: cleanBase64
+                            }
+                        }
+                    ]
+                }
             ],
+            config: {
+                temperature: 0.2, // Lower temperature for more deterministic/JSON output
+            }
         });
 
-        const text = response.text || "";
-        console.log('📝 AI Response:', text.substring(0, 200) + '...');
-
-        // Parse JSON from response
+        const text = response.text || "{}";
         const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-            console.error('❌ No JSON found in response');
-            throw new Error('AI did not return valid analysis. Please try again.');
+
+        if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            console.log('✅ Parsed Analysis:', parsed);
+            return parsed;
+        } else {
+            throw new Error("Invalid response format from AI");
         }
-
-        const analysis = JSON.parse(jsonMatch[0]);
-        console.log('✅ Parsed Analysis:', analysis);
-
-        return {
-            summary: analysis.summary || 'Clothing item',
-            detectedType: analysis.detectedType || 'unknown',
-            styleParams: Array.isArray(analysis.styleParams) ? analysis.styleParams : [],
-            detectedColors: Array.isArray(analysis.detectedColors) ? analysis.detectedColors : [],
-            fabricGuess: analysis.fabricGuess,
-            timestamp: Date.now(),
-        };
     } catch (error: any) {
-        console.error('❌ Gemini Analysis Error:', error.message);
-
-        // Provide user-friendly error messages
-        if (error?.message?.includes('API_KEY') || error?.message?.includes('api key')) {
-            throw new Error('Invalid API key. Please check your Gemini API key in Settings.');
-        } else if (error?.message?.includes('429') || error?.status === 429) {
-            throw new Error('Rate limit reached. Please wait a minute and try again.');
-        }
-
-        throw new Error(`AI Analysis Failed: ${error.message}`);
+        console.error('Error analyzing image:', error);
+        throw new Error(error.message || 'Failed to analyze image');
     }
 }
 
 /**
- * Context item for AI chat
- */
-interface ContextItem {
-    id: string;
-    description: string;
-    summary?: string;
-    colors: string[];
-    category: string;
-}
-
-/**
- * Ask AI with wardrobe context
+ * Chat with the AI Stylist with wardrobe context
  * @param question - User's question
- * @param contextItems - Selected wardrobe items to use as context
- * @returns AI response
+ * @param contextItems - Relevant wardrobe items
+ * @returns AI's text response
  */
 export async function askAiWithContext(
     question: string,
@@ -288,7 +191,7 @@ export async function askAiWithContext(
 ): Promise<string> {
     const genAI = getGenAI();
     if (!genAI) {
-        return "Please configure your Gemini API key in Settings to chat with me!";
+        return "Please configure your Gemini API key in Settings to use the AI Stylist.";
     }
 
     // Build context from selected items
@@ -296,37 +199,47 @@ export async function askAiWithContext(
     if (contextItems.length > 0) {
         contextText = 'The user has selected these items from their wardrobe:\n\n';
         contextItems.forEach((item, index) => {
+            const colors = Array.isArray(item.colors) ? item.colors.join(', ') : 'Unknown';
             contextText += `${index + 1}. ${item.description} (${item.category})\n`;
             if (item.summary) {
                 contextText += `   AI Analysis: ${item.summary}\n`;
             }
-            contextText += `   Colors: ${item.colors.join(', ')}\n\n`;
+            contextText += `   Colors: ${colors}\n\n`;
         });
     }
 
-    const systemPrompt = `You are **StyAiLe** - a friendly, professional fashion stylist with a warm personality. You're here to help users look and feel their best!
+    const systemPrompt = `You are an elite, honest fashion stylist. Your goal is to give REALISTIC, constructive advice.
 
-${contextText}
+CONTEXT:
+- User has specific items in their wardrobe
+- They might be asking for outfit ideas or feedback
+- User wants to look "Status" / "Premium" / "Stylish"
 
-## Your Personality:
-- **Friendly & Encouraging**: Lead with positivity! Highlight what works before suggesting improvements ✨
-- **Honest but Kind**: Be truthful without being rude. Frame suggestions as "even better" options
-- **Culturally Aware**: You understand Indian fashion (Kurti + Jeans = Indo-Western, Saree traditions, ethnic fusion)
-- **Concise & Helpful**: Keep responses under 150 words. Use bullet points for clarity
+RULES:
+1. **Be Honest, Not Flattering**: If items don't match, say so. Suggest why (e.g., "The textures clash" or "The colors are too similar").
+2. **Specific & Actionable**: Don't just say "It looks great." Say "Tuck the shirt in to define ease" or "Roll the sleeves for a casual look."
+3. **No Robot Speak**: Avoid "I suggest you wear..." or "Here is a recommendation." content. Speak like a human stylist.
+4. **Focus on Fit & Visuals**: Mention color coordination, silhouette, and occasion suitability.
+5. **Cultural Context**: If items are Indian ethnic (Kurtis, Sarees), provide relevant styling tips (e.g., specific jewelry, draping).
 
-## Response Style:
-- Start with what's working well or a compliment
-- If there are improvements needed, frame them positively ("This would look even better with...")
-- Use emojis sparingly for warmth (1-2 per response)
-- Structure with ### headers and bullet points
+FORMAT:
+- Keep responses concise (max 3-4 sentences unless asked for detail).
+- Use bullet points for multiple ideas.
+- Use emojis sparingly but effectively.
 
-## Important:
-- NEVER be condescending or rude
-- NEVER say "I hope this helps" - instead end with a specific actionable tip
-- IF items don't match well, explain WHY in a helpful way
-- Always give constructive alternatives`;
+Now answer the user's request based on this context:
+${JSON.stringify(contextItems, null, 2)}
+`;
+
+    // Credit Deduction
+    const cost = 1;
+    const hasCredits = await CreditService.deductCredits(cost, 'chat');
+    if (!hasCredits) {
+        return "I'm sorry, you don't have enough credits to chat. Please watch an ad or upgrade to continue!";
+    }
 
     try {
+        console.log('📡 Calling Gemini API for chat...');
         const response = await generateWithSmartFallback(genAI, {
             contents: [
                 { role: "user", parts: [{ text: systemPrompt }] },
@@ -335,6 +248,7 @@ ${contextText}
             ],
         });
 
+        console.log('✅ Chat response received');
         return response.text || "I'm here to help with your style questions!";
     } catch (error: any) {
         console.error('Error in AI chat:', error);
@@ -370,11 +284,12 @@ export async function getAiOutfitSuggestions(
     // Build wardrobe context
     let wardrobeContext = 'Available wardrobe items:\n\n';
     wardrobeItems.forEach((item, index) => {
+        const colors = Array.isArray(item.colors) ? item.colors.join(', ') : 'Unknown';
         wardrobeContext += `[${index}] ${item.description} (${item.category})\n`;
         if (item.summary) {
             wardrobeContext += `    Analysis: ${item.summary}\n`;
         }
-        wardrobeContext += `    Colors: ${item.colors.join(', ')}\n\n`;
+        wardrobeContext += `    Colors: ${colors}\n\n`;
     });
 
     const systemPrompt = `You are an expert fashion stylist with a sharp eye for **Indo-Western** and **Global** trends. Create outfit combinations from the user's wardrobe.
@@ -383,14 +298,14 @@ ${wardrobeContext}
 
 Return your response as JSON with this structure:
 {
-  "message": "Honest opinion on the available options",
-  "suggestions": [
-    {
-      "name": "Outfit Name (e.g. 'Office Chic' or 'Desi Fusion')",
-      "itemIndices": [0, 2],
-      "reasoning": "Why this works (or why it's a bold choice)"
-    }
-  ]
+    "message": "Honest opinion on the available options",
+    "suggestions": [
+        {
+            "name": "Outfit Name (e.g. 'Office Chic' or 'Desi Fusion')",
+            "itemIndices": [0, 2],
+            "reasoning": "Why this works (or why it's a bold choice)"
+        }
+    ]
 }
 
 Rules:
@@ -438,67 +353,41 @@ Rules:
 }
 
 /**
- * Fit pic rating result
+ * Rate a fit pic (outfit photo)
+ * @param base64Image - The image to rate
+ * @returns Rating, compliments, suggestions
  */
-export interface FitPicRating {
-    rating: number;          // 1-10
-    compliments: string[];   // What's working well
-    suggestions: string[];   // How to improve
-    overallFeedback: string; // Summary
-}
-
-/**
- * Rate a user's outfit photo ("fit pic")
- * @param base64Image - Base64 encoded image of the user wearing an outfit
- * @returns AI rating and feedback
- */
-export async function rateFitPic(base64Image: string): Promise<FitPicRating> {
+export async function rateOutfit(base64Image: string): Promise<{
+    rating: number;
+    compliments: string[];
+    suggestions: string[];
+    overallFeedback: string;
+}> {
     const genAI = getGenAI();
-    if (!genAI) {
-        throw new Error('Please configure your Gemini API key in Settings to use AI features.');
-    }
+    if (!genAI) throw new Error('API Key missing');
 
-    // Ensure base64 has proper format
-    const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
-
-    const prompt = `You are a friendly, encouraging fashion stylist rating a user's outfit photo. Be POSITIVE and HONEST - compliment what works and gently suggest improvements.
-
-Your response MUST be valid JSON with this exact structure:
-{
-  "rating": 8,
-  "compliments": ["What's working great - colors, fit, style choices"],
-  "suggestions": ["Gentle improvements - accessories, adjustments"],
-  "overallFeedback": "2-3 sentence summary that's encouraging and helpful"
-}
-
-Guidelines:
-- Rating 1-10 (be generous but honest - most outfits should be 6-9)
-- Compliments: 2-4 specific things that look good
-- Suggestions: 1-3 improvements (optional if outfit is great)
-- Be warm, professional, and encouraging
-- Consider fit, color coordination, accessorizing, occasion appropriateness
-- Understand Indian fashion (ethnic, Indo-Western, traditional wear)
-
-NEVER be harsh or discouraging. Frame everything positively!`;
-
-    console.log('📸 Gemini: Rating fit pic...');
+    const prompt = `Rate this outfit on a scale of 1-10. Be honest but constructive.
+    Return ONLY JSON:
+    {
+        "rating": number,
+        "compliments": ["list", "of", "good", "points"],
+        "suggestions": ["list", "of", "improvements"],
+        "overallFeedback": "short summary"
+    }`;
 
     try {
+        const cleanBase64 = base64Image.includes('base64,')
+            ? base64Image.split('base64,')[1]
+            : base64Image;
+
         const response = await generateWithSmartFallback(genAI, {
-            contents: [
-                {
-                    role: "user",
-                    parts: [
-                        { text: prompt },
-                        {
-                            inlineData: {
-                                mimeType: "image/jpeg",
-                                data: base64Data,
-                            },
-                        },
-                    ],
-                },
-            ],
+            contents: [{
+                role: "user",
+                parts: [
+                    { text: prompt },
+                    { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } }
+                ]
+            }]
         });
 
         const text = response.text || "";

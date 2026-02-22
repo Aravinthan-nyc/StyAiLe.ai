@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Navigation from './components/Navigation';
+import Sidebar from './components/Sidebar';
 import WardrobeView from './views/WardrobeView';
 import AddItemView from './views/AddItemView';
 import StylistView from './views/StylistView';
@@ -8,6 +9,19 @@ import SplashScreen from './components/SplashScreen';
 import AuthView from './views/AuthView';
 import OnboardingView from './views/OnboardingView';
 import ApiKeySetupModal from './components/ApiKeySetupModal';
+// New SaaS Feature Views
+import SubscriptionView from './views/SubscriptionView';
+import PackingListView from './views/PackingListView';
+import CapsuleWardrobeView from './views/CapsuleWardrobeView';
+import AnalyticsView from './views/AnalyticsView';
+import OutfitsView from './views/OutfitsView';
+import ExportView from './views/ExportView';
+import OutfitPlannerView from './views/OutfitPlannerView';
+import SavedOutfitsView from './views/SavedOutfitsView';
+import LaundryTrackerView from './views/LaundryTrackerView';
+import BetaExpiredView from './views/BetaExpiredView';
+import UpdatePrompt from './components/UpdatePrompt';
+
 import { AppView, WardrobeItem } from './types';
 import {
   fetchWardrobeItems,
@@ -25,10 +39,13 @@ import {
   signOut
 } from './services/authService';
 import { lockItem, unlockItem } from './services/lockService';
+import { isBetaExpired, getDaysRemaining } from './services/betaSecurityService';
 import { User } from '@supabase/supabase-js';
+import { AdService } from './services/adService';
+
 
 // App flow states
-type AppFlowState = 'loading' | 'auth' | 'onboarding' | 'api_setup' | 'main';
+type AppFlowState = 'loading' | 'auth' | 'onboarding' | 'api_setup' | 'main' | 'beta_expired';
 
 function App() {
   // Auth & flow state
@@ -37,17 +54,26 @@ function App() {
 
   // Main app state
   const [currentView, setCurrentView] = useState<AppView>(AppView.WARDROBE);
+  const [previousView, setPreviousView] = useState<AppView>(AppView.WARDROBE);
   const [wardrobe, setWardrobe] = useState<WardrobeItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(true);
   const [stylistContext, setStylistContext] = useState<WardrobeItem[]>([]);
+  const [plannerContext, setPlannerContext] = useState<WardrobeItem[]>([]);
   const [showSplash, setShowSplash] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Check auth status on mount
   useEffect(() => {
     async function checkAuthStatus() {
       try {
+        // CRITICAL: Check beta expiration FIRST
+        if (isBetaExpired()) {
+          setFlowState('beta_expired');
+          return;
+        }
+
         const currentUser = await getCurrentUser();
         setUser(currentUser);
 
@@ -78,10 +104,14 @@ function App() {
       }
     });
 
+    // Initialize AdService
+    AdService.initialize().catch(console.error);
+
     return unsubscribe;
   }, []);
 
   // Load wardrobe when entering main app
+
   useEffect(() => {
     if (flowState !== 'main') return;
 
@@ -193,6 +223,16 @@ function App() {
     setFlowState('auth');
   }, []);
 
+  // Navigation with history
+  const navigateTo = useCallback((view: AppView) => {
+    setPreviousView(currentView);
+    setCurrentView(view);
+  }, [currentView]);
+
+  const goBack = useCallback(() => {
+    setCurrentView(previousView);
+  }, [previousView]);
+
   const handleAddItem = useCallback(async (item: WardrobeItem) => {
     try {
       if (isOnline) {
@@ -281,6 +321,24 @@ function App() {
     return <ApiKeySetupModal onComplete={handleApiKeyComplete} />;
   }
 
+  if (flowState === 'beta_expired') {
+    return <BetaExpiredView />;
+  }
+
+  // Determine if we should show navigation (hide for sub-views)
+  const hideNavViews = [
+    AppView.SUBSCRIPTION,
+    AppView.PACKING_LIST,
+    AppView.CAPSULE_WARDROBE,
+    AppView.ANALYTICS,
+    AppView.OUTFITS,
+    AppView.EXPORT,
+    AppView.OUTFIT_PLANNER,
+    AppView.LAUNDRY,
+    AppView.SAVED_OUTFITS
+  ];
+  const shouldShowNav = !hideNavViews.includes(currentView);
+
   // Main app
   return (
     <div className="min-h-screen bg-black text-gray-100 font-sans max-w-xl mx-auto border-x border-white/5 shadow-2xl relative overflow-hidden">
@@ -303,6 +361,7 @@ function App() {
           </div>
         ) : (
           <>
+            {/* Core Views */}
             {currentView === AppView.WARDROBE && (
               <WardrobeView
                 items={wardrobe}
@@ -311,6 +370,7 @@ function App() {
                 onAskStylist={handleAskStylist}
                 onLockItem={handleLockItem}
                 onUnlockItem={handleUnlockItem}
+                onOpenSidebar={() => setSidebarOpen(true)}
               />
             )}
             {currentView === AppView.ADD_ITEM && (
@@ -325,17 +385,149 @@ function App() {
               />
             )}
             {currentView === AppView.SETTINGS && (
-              <SettingsView setView={setCurrentView} onSignOut={handleSignOut} />
+              <SettingsView
+                setView={setCurrentView}
+                onSignOut={handleSignOut}
+                onNavigateTo={navigateTo}
+              />
+            )}
+
+            {/* SaaS Feature Views */}
+            {currentView === AppView.SUBSCRIPTION && (
+              <SubscriptionView
+                onBack={() => setCurrentView(AppView.WARDROBE)}
+                wardrobeCount={wardrobe.length}
+              />
+            )}
+            {currentView === AppView.OUTFITS && (
+              <OutfitsView
+                wardrobe={wardrobe}
+                onBack={() => setCurrentView(AppView.WARDROBE)}
+              />
+            )}
+            {currentView === AppView.OUTFIT_PLANNER && (
+              <OutfitPlannerView
+                wardrobe={wardrobe}
+                contextItems={plannerContext}
+                onBack={() => {
+                  setPlannerContext([]);
+                  setCurrentView(AppView.WARDROBE);
+                }}
+              />
+            )}
+            {currentView === AppView.PACKING_LIST && (
+              <PackingListView
+                wardrobe={wardrobe}
+                onBack={() => setCurrentView(AppView.WARDROBE)}
+              />
+            )}
+            {currentView === AppView.CAPSULE_WARDROBE && (
+              <CapsuleWardrobeView
+                wardrobe={wardrobe}
+                onBack={() => setCurrentView(AppView.WARDROBE)}
+                onNavigateToPlanner={(items) => {
+                  if (items) setPlannerContext(items);
+                  setCurrentView(AppView.OUTFIT_PLANNER);
+                }}
+              />
+            )}
+            {currentView === AppView.ANALYTICS && (
+              <AnalyticsView
+                wardrobe={wardrobe}
+                onBack={() => setCurrentView(AppView.WARDROBE)}
+              />
+            )}
+            {currentView === AppView.EXPORT && (
+              <ExportView
+                wardrobe={wardrobe}
+                onBack={() => setCurrentView(AppView.WARDROBE)}
+              />
+            )}
+            {currentView === AppView.SAVED_OUTFITS && (
+              <SavedOutfitsView
+                wardrobe={wardrobe}
+                onBack={() => setCurrentView(AppView.WARDROBE)}
+              />
+            )}
+            {currentView === AppView.LAUNDRY && (
+              <LaundryTrackerView
+                wardrobe={wardrobe}
+                onBack={() => setCurrentView(AppView.WARDROBE)}
+                onUnlockItem={handleUnlockItem}
+              />
             )}
           </>
         )}
       </main>
 
-      {!loading && !showSplash && (
+      {!loading && !showSplash && shouldShowNav && (
         <Navigation currentView={currentView} setView={setCurrentView} />
       )}
+
+      {/* Sidebar - Always available */}
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        currentView={currentView}
+        onNavigate={(view) => {
+          setCurrentView(view);
+          setSidebarOpen(false);
+        }}
+        hasFeature={(feature) => {
+          // Simple feature detection
+          if (feature === 'hasExport') return true; // Everyone can use export
+          if (feature === 'hasPacking') return true; // Everyone can use packing/capsule
+          if (feature === 'hasAnalytics') return false; // Premium only
+          return false;
+        }}
+      />
+      {/* Live Update Prompt */}
+      {flowState === 'main' && <UpdatePrompt />}
     </div>
   );
 }
 
-export default App;
+// Simple Error Boundary
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-8">
+          <h1 className="text-2xl font-bold text-red-500 mb-4">Something went wrong</h1>
+          <pre className="bg-gray-900 p-4 rounded-lg overflow-auto max-w-full text-xs text-red-200 border border-red-900/50">
+            {this.state.error?.toString()}
+          </pre>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-8 px-6 py-3 bg-white text-black rounded-full font-bold hover:bg-gray-200"
+          >
+            Reload App
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+export default function AppWrapper() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}

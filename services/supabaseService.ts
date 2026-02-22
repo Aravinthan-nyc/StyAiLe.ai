@@ -78,8 +78,10 @@ export async function uploadImage(base64Data: string, userId: string): Promise<s
     }
 
     if (result.error) {
-        console.error('Error uploading image:', result.error);
-        throw new Error('Failed to upload image. Please try again.');
+        console.error('Error uploading image (RLS/Auth issue), falling back to local storage:', result.error);
+        // Fallback: Return the original base64 data to store in DB directly
+        // This allows the app to work even if storage is blocked/misconfigured
+        return base64Data;
     }
 
     return result.data.path;
@@ -91,6 +93,11 @@ export async function uploadImage(base64Data: string, userId: string): Promise<s
  * @returns Public URL for the image
  */
 export function getImageUrl(imagePath: string): string {
+    // If it's a data URI (fallback mode), return as-is
+    if (imagePath.startsWith('data:') || imagePath.startsWith('blob:')) {
+        return imagePath;
+    }
+
     if (!supabase) {
         // Return the path as-is for local/base64 images
         return imagePath;

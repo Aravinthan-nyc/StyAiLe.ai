@@ -3,9 +3,11 @@ import { WardrobeItem, OutfitSuggestion, ChatMessage, OccasionType } from '../ty
 import { getAlgorithmRecommendations, getOccasionOptions } from '../services/outfitAlgorithmService';
 import { askAiWithContext, getAiOutfitSuggestions } from '../services/unifiedAiService';
 import { generateId } from '../utils';
+import { WatchAdModal } from '../components/WatchAdModal';
+import { supabase } from '../services/supabaseClient';
 import MarkdownText from '../components/MarkdownText';
 import TypewriterText from '../components/TypewriterText';
-import { Send, User, Sparkles, Trash2, Shirt } from '../components/Icons';
+import { Send, User, Sparkles, Trash2, Shirt, RefreshCw, AlertTriangle } from '../components/Icons';
 
 interface StylistViewProps {
     wardrobe: WardrobeItem[];
@@ -33,8 +35,10 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
         return [];
     });
     const [inputText, setInputText] = useState('');
+    const [lastQuery, setLastQuery] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [showOccasions, setShowOccasions] = useState(true);
+    const [unavailableItems, setUnavailableItems] = useState<WardrobeItem[]>([]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     // Save chat history to localStorage whenever messages change
@@ -77,6 +81,13 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
 
     useEffect(() => {
         if (initialContext && initialContext.length > 0 && !isLoading && !processingContextRef.current) {
+            // Check for unavailable items
+            const unavailable = initialContext.filter(i => i.status && i.status !== 'available');
+            if (unavailable.length > 0) {
+                setUnavailableItems(unavailable);
+                // We still proceed but might warn user in UI
+            }
+
             const analyzeSelectedItems = async () => {
                 processingContextRef.current = true;
                 setShowOccasions(false);
@@ -91,6 +102,7 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
                     timestamp: Date.now(),
                 };
                 setMessages(prev => [...prev, userMsg]);
+                setLastQuery(`I've selected ${initialContext.length} item(s): ${itemNames}. What can I do with these?`);
 
                 try {
                     // Ask AI for styling suggestions with selected items
@@ -151,11 +163,14 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
         setShowOccasions(false);
         setIsLoading(true);
 
+        const query = `I need an outfit for: ${occasion.label}`;
+        setLastQuery(query);
+
         // Add user message
         const userMsg: ChatMessage = {
             id: generateId(),
             role: 'user',
-            text: `I need an outfit for: ${occasion.label}`,
+            text: query,
             timestamp: Date.now(),
         };
         setMessages(prev => [...prev, userMsg]);
@@ -175,21 +190,24 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
         setIsLoading(false);
     };
 
-    const handleSendMessage = async () => {
-        if (!inputText.trim() || isLoading) return;
+    const handleSendMessage = async (isRegenerate: boolean = false) => {
+        const query = isRegenerate ? lastQuery : inputText.trim();
 
-        setShowOccasions(false);
+        if (!query || isLoading) return;
+
+        if (!isRegenerate) {
+            const userMsg: ChatMessage = {
+                id: generateId(),
+                role: 'user',
+                text: query,
+                timestamp: Date.now(),
+            };
+            setMessages(prev => [...prev, userMsg]);
+            setLastQuery(query);
+            setInputText('');
+        }
+
         setIsLoading(true);
-
-        const userMsg: ChatMessage = {
-            id: generateId(),
-            role: 'user',
-            text: inputText.trim(),
-            timestamp: Date.now(),
-        };
-        setMessages(prev => [...prev, userMsg]);
-        const query = inputText.trim();
-        setInputText('');
 
         try {
             // Check if it's an outfit request
@@ -258,30 +276,35 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
         if (items.length === 0) return null;
 
         return (
-            <div key={index} className="glass-card rounded-2xl p-4 mt-3 animate-slide-up bg-white/5 border border-white/10" style={{ animationDelay: `${index * 0.1}s` }}>
+            <div key={index} className="glass-card rounded-2xl p-4 mt-3 animate-slide-up bg-black/40 border border-white/10" style={{ animationDelay: `${index * 0.1}s` }}>
                 <div className="flex items-center gap-2 mb-3">
-                    <Sparkles size={16} className="text-secondary" />
+                    <Sparkles size={16} className="text-white" />
                     <h4 className="font-semibold text-gray-200">{suggestion.name}</h4>
                 </div>
 
                 {/* Item thumbnails */}
                 <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
                     {items.map((item) => (
-                        <div key={item.id} className="flex-shrink-0">
+                        <div key={item.id} className="flex-shrink-0 relative">
                             <img
                                 src={item.imageData}
                                 alt={item.description}
                                 className="w-20 h-20 rounded-xl object-cover border border-white/10"
                             />
+                            {item.status && item.status !== 'available' && (
+                                <div className="absolute top-0 right-0 bg-red-500 text-white text-[10px] px-1 rounded-bl-md rounded-tr-md">
+                                    {item.status === 'laundry' ? '🧺' : '📦'}
+                                </div>
+                            )}
                             <p className="text-xs text-gray-400 text-center mt-1 truncate w-20">{item.description}</p>
                         </div>
                     ))}
                 </div>
 
                 {/* Reasoning */}
-                <div className="bg-black/20 rounded-xl p-3 border border-white/5">
+                <div className="bg-black/40 rounded-xl p-3 border border-white/5">
                     <p className="text-sm text-gray-300 flex items-start gap-2">
-                        <span className="text-primary mt-1"><Shirt size={12} /></span>
+                        <span className="text-gray-400 mt-1"><Shirt size={12} /></span>
                         {suggestion.reasoning}
                     </p>
                 </div>
@@ -290,16 +313,16 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
     };
 
     return (
-        <div className="flex flex-col h-screen pb-20 bg-[#050505]">
+        <div className="flex flex-col h-screen pb-20 bg-black">
             {/* Header */}
-            <div className="sticky top-0 bg-[#050505]/80 backdrop-blur-xl z-20 px-4 py-4 border-b border-white/5">
+            <div className="sticky top-0 bg-black/90 backdrop-blur-xl z-20 px-4 py-4 border-b border-white/10">
                 <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.2)]">
-                        <Sparkles size={20} className="text-black" />
+                    <div className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center border border-white/20">
+                        <Sparkles size={20} className="text-white" />
                     </div>
                     <div className="flex-1">
-                        <h1 className="font-bold text-white tracking-tight">Flareo Assistant</h1>
-                        <p className="text-xs text-primary font-medium tracking-wide">ONLINE • AI ACTIVE</p>
+                        <h1 className="font-bold text-white tracking-tight">Stylist AI</h1>
+                        <p className="text-xs text-gray-400 font-medium tracking-wide">ONLINE • CREDITS ACTIVE</p>
                     </div>
                     {messages.length > 1 && (
                         <button
@@ -313,18 +336,33 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
                 </div>
             </div>
 
+            {/* Unavailable Items Alert */}
+            {unavailableItems.length > 0 && (
+                <div className="px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/20 backdrop-blur-sm flex items-center gap-3">
+                    <AlertTriangle size={16} className="text-yellow-500" />
+                    <p className="text-xs text-yellow-200">
+                        {unavailableItems.length} item(s) are currently in Laundry or Packed.
+                        <button
+                            className="underline ml-2 font-semibold"
+                            onClick={() => setUnavailableItems([])}
+                        >
+                            Dismiss
+                        </button>
+                    </p>
+                </div>
+            )}
+
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-4 py-4 custom-scrollbar space-y-6">
                 {messages.map((msg) => {
-                    const isRecent = Date.now() - msg.timestamp < 10000; // 10 seconds threshold for animation
+                    const isRecent = Date.now() - msg.timestamp < 10000;
                     return (
                         <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
-                            <div className={`max-w-[85%] ${msg.role === 'user' ? 'bg-gradient-to-br from-primary to-secondary text-black rounded-2xl rounded-tr-sm px-5 py-3 shadow-lg' : 'glass-card rounded-2xl rounded-tl-sm px-5 py-4 border border-white/5'}`}>
+                            <div className={`max-w-[85%] ${msg.role === 'user' ? 'bg-white/10 backdrop-blur-md text-white rounded-2xl rounded-tr-sm px-5 py-3 border border-white/10' : 'bg-black/60 backdrop-blur-md rounded-2xl rounded-tl-sm px-5 py-4 border border-white/10'}`}>
                                 {msg.role === 'user' ? (
                                     <p className="text-sm font-medium leading-relaxed">{msg.text}</p>
                                 ) : (
                                     <div className="min-h-[20px]">
-                                        {/* Use Typewriter for model messages if they are recent, otherwise static text */}
                                         {isRecent ? (
                                             <TypewriterText text={msg.text} speed={15} className="text-gray-300 text-sm leading-relaxed" />
                                         ) : (
@@ -347,10 +385,10 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
                 {/* Loading indicator */}
                 {isLoading && (
                     <div className="flex justify-start animate-fade-in">
-                        <div className="glass-card px-5 py-4 rounded-2xl rounded-tl-sm border border-white/5">
+                        <div className="bg-black/60 px-5 py-4 rounded-2xl rounded-tl-sm border border-white/10">
                             <div className="flex gap-1.5">
-                                <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                <div className="w-2 h-2 bg-secondary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                                 <div className="w-2 h-2 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                             </div>
                         </div>
@@ -360,9 +398,22 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
                 <div ref={messagesEndRef} />
             </div>
 
+            {/* Regenerate Button (if history exists and not loading) */}
+            {!isLoading && messages.length > 0 && lastQuery && (
+                <div className="flex justify-center mb-2">
+                    <button
+                        onClick={() => handleSendMessage(true)}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-full text-xs text-gray-400 hover:text-white hover:bg-white/10 transition-all"
+                    >
+                        <RefreshCw size={12} />
+                        Regenerate Response
+                    </button>
+                </div>
+            )}
+
             {/* Occasion Buttons */}
             {showOccasions && wardrobe.length >= 2 && (
-                <div className="px-4 py-3 bg-[#050505]/90 backdrop-blur-md border-t border-white/5">
+                <div className="px-4 py-3 bg-black/90 backdrop-blur-md border-t border-white/5">
                     <p className="text-xs font-medium text-gray-400 mb-3 ml-1 uppercase tracking-wider">Quick Suggestions</p>
                     <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">
                         {occasions.map((occ) => (
@@ -381,22 +432,21 @@ const StylistView: React.FC<StylistViewProps> = ({ wardrobe, initialContext, onC
             )}
 
             {/* Input Area */}
-            <div className="sticky bottom-20 px-4 py-3 bg-[#050505]/80 backdrop-blur-md border-t border-white/5">
+            <div className="sticky bottom-20 px-4 py-3 bg-black/80 backdrop-blur-md border-t border-white/5">
                 <div className="flex gap-3 items-center relative">
-                    <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-secondary/10 blur-xl opacity-20 -z-10" />
                     <input
                         type="text"
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                        placeholder={wardrobe.length < 2 ? "Add items to start chatting..." : "Ask Flareo..."}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage(false)}
+                        placeholder={wardrobe.length < 2 ? "Add items to start chatting..." : "Ask Stylist..."}
                         disabled={isLoading || wardrobe.length < 2}
-                        className="flex-1 px-5 py-3.5 bg-black/40 border border-white/10 rounded-full text-white text-sm placeholder-gray-500 focus:outline-none focus:border-primary/50 focus:shadow-[0_0_15px_rgba(255,255,255,0.1)] transition-all disabled:opacity-50"
+                        className="flex-1 px-5 py-3.5 bg-white/5 border border-white/10 rounded-full text-white text-sm placeholder-gray-500 focus:outline-none focus:border-white/30 focus:shadow-[0_0_15px_rgba(255,255,255,0.05)] transition-all disabled:opacity-50"
                     />
                     <button
-                        onClick={handleSendMessage}
+                        onClick={() => handleSendMessage(false)}
                         disabled={!inputText.trim() || isLoading || wardrobe.length < 2}
-                        className="p-3.5 bg-white text-black rounded-full shadow-[0_0_15px_rgba(255,255,255,0.3)] btn-press disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-200 transition-colors"
+                        className="p-3.5 bg-white text-black rounded-full shadow-[0_0_15px_rgba(255,255,255,0.2)] btn-press disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-200 transition-colors"
                     >
                         <Send size={20} />
                     </button>

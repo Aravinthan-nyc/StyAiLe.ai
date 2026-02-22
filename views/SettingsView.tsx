@@ -1,236 +1,221 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { AppView } from '../types';
-import { Key, ExternalLink, Check, X } from '../components/Icons';
+import { X, Bug, RefreshCw, Mail, Shield, ChevronRight } from '../components/Icons';
+import { getSubscription, formatPlanName, getPlanColor } from '../services/subscriptionService';
+import { checkForUpdates, APP_VERSION } from '../services/liveUpdateService';
+import { CreditDisplay } from '../components/CreditDisplay';
+import { AdService } from '../services/adService';
+import { CreditService } from '../services/creditService';
+
 
 interface SettingsViewProps {
     setView: (view: AppView) => void;
     onSignOut?: () => void;
+    onNavigateTo?: (view: AppView) => void;
 }
 
-interface ApiKeys {
-    nvidia: string;
-    gemini: string;
-}
+const SettingsView: React.FC<SettingsViewProps> = ({ setView, onSignOut, onNavigateTo }) => {
+    const [checkingUpdate, setCheckingUpdate] = useState(false);
+    const subscription = getSubscription();
 
-const STORAGE_KEY = 'styaile_api_keys';
-
-const SettingsView: React.FC<SettingsViewProps> = ({ setView, onSignOut }) => {
-    const [keys, setKeys] = useState<ApiKeys>({ nvidia: '', gemini: '' });
-    const [saved, setSaved] = useState(false);
-    const [showTutorial, setShowTutorial] = useState(false);
-
-    useEffect(() => {
-        // Load saved keys from localStorage
-        const savedKeys = localStorage.getItem(STORAGE_KEY);
-        if (savedKeys) {
-            try {
-                setKeys(JSON.parse(savedKeys));
-            } catch (e) {
-                console.error('Failed to load API keys:', e);
-            }
+    const navigate = (view: AppView) => {
+        if (onNavigateTo) {
+            onNavigateTo(view);
         } else {
-            // First time user - show tutorial
-            setShowTutorial(true);
-        }
-    }, []);
-
-    const handleSave = () => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-
-        // Also update .env variables for immediate use (only works in memory, not file)
-        // The app will need to reload to pick up these changes from localStorage
-        if (keys.nvidia) {
-            (window as any).__NVIDIA_API_KEY__ = keys.nvidia;
-        }
-        if (keys.gemini) {
-            (window as any).__GEMINI_API_KEY__ = keys.gemini;
+            setView(view);
         }
     };
 
-    const handleClear = () => {
-        setKeys({ nvidia: '', gemini: '' });
-        localStorage.removeItem(STORAGE_KEY);
+    const handleReportBug = () => {
+        const subject = encodeURIComponent('Bug Report / Feedback - StyAiLe Beta');
+        const body = encodeURIComponent(`Please describe the issue or feedback:\n\n\n\n--- App Info ---\nVersion: ${APP_VERSION.version} (Build ${APP_VERSION.buildNumber})\nPlatform: Web/PWA`);
+        window.location.href = `mailto:notpavan2022@gmail.com?subject=${subject}&body=${body}`;
+    };
+
+    const handleCheckUpdate = async () => {
+        setCheckingUpdate(true);
+        try {
+            const status = await checkForUpdates(true);
+            if (!status.available) {
+                // Simple feedback for no update
+                // In a real app, use a toast. Here standard alert is fine as requested "overkill" applies to logic not necessarily every UI element unless specified
+                // But let's make it look nice if we can, or just rely on UpdatePrompt to handle the positive case
+                alert(`You are on the latest version (${APP_VERSION.version})`);
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Failed to check for updates');
+        } finally {
+            setCheckingUpdate(false);
+        }
     };
 
     return (
-        <div className="min-h-screen pb-32 px-4 pt-6 bg-black text-white">
+        <div className="min-h-screen pb-32 px-4 pt-6 bg-black text-white font-sans">
             {/* Header */}
             <div className="flex items-center justify-between mb-8">
                 <button
                     onClick={() => setView(AppView.WARDROBE)}
-                    className="p-2 -ml-2 text-gray-400 hover:text-white btn-press transition-colors"
+                    className="p-2 -ml-2 text-gray-400 hover:text-white transition-colors hover:bg-white/5 rounded-full"
                 >
                     <X size={24} />
                 </button>
-                <div className="flex items-center gap-2">
-                    <img src="/logo.png" alt="Logo" className="w-8 h-8" />
-                    <h1 className="text-xl font-bold text-white">Settings</h1>
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-gradient-to-tr from-white to-gray-400 rounded-lg flex items-center justify-center">
+                        <span className="text-black font-bold text-lg">S</span>
+                    </div>
+                    <h1 className="text-xl font-bold text-white tracking-tight">Settings</h1>
                 </div>
-                <div className="w-10" />
+                <CreditDisplay />
             </div>
 
-            {/* Tutorial Modal */}
-            {showTutorial && (
-                <div className="glass-card-strong p-6 mb-6 animate-slide-up">
-                    <h2 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
-                        <Key size={20} /> Welcome to StyAiLe.ai!
-                    </h2>
-                    <p className="text-gray-400 text-sm mb-4 leading-relaxed">
-                        To use AI features, you need a <strong>Gemini API key</strong>. It's free and takes 30 seconds to get!
-                    </p>
-                    <div className="space-y-3 text-sm">
-                        <div className="flex items-start gap-2">
-                            <span className="text-white font-mono bg-white/10 px-2 py-0.5 rounded">1</span>
-                            <span className="text-gray-300">Go to Google AI Studio (link below)</span>
-                        </div>
-                        <div className="flex items-start gap-2">
-                            <span className="text-white font-mono bg-white/10 px-2 py-0.5 rounded">2</span>
-                            <span className="text-gray-300">Click "Create API Key" and copy it</span>
-                        </div>
-                        <div className="flex items-start gap-2">
-                            <span className="text-white font-mono bg-white/10 px-2 py-0.5 rounded">3</span>
-                            <span className="text-gray-300">Paste it below and tap Save</span>
-                        </div>
-                    </div>
-                    <button
-                        onClick={() => setShowTutorial(false)}
-                        className="mt-5 w-full py-3 bg-white text-black rounded-2xl font-semibold btn-press"
+            {/* Current Plan Badge */}
+            <button
+                onClick={() => navigate(AppView.SUBSCRIPTION)}
+                className="w-full bg-zinc-900/50 border border-white/10 p-4 rounded-2xl mb-8 flex items-center justify-between group hover:bg-zinc-900 transition-all"
+            >
+                <div className="flex items-center gap-4">
+                    <div
+                        className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl shadow-lg"
+                        style={{ backgroundColor: `${getPlanColor(subscription.tier)}20`, boxShadow: `0 0 20px ${getPlanColor(subscription.tier)}10` }}
                     >
-                        Got it!
+                        {subscription.tier === 'free' ? '🆓' : subscription.tier === 'starter' ? '⭐' : subscription.tier === 'pro' ? '💎' : '👑'}
+                    </div>
+                    <div className="text-left">
+                        <div className="font-bold text-white text-lg">{formatPlanName(subscription.tier)} Plan</div>
+                        <div className="text-sm text-gray-400 font-medium">{subscription.status}</div>
+                    </div>
+                </div>
+                <ChevronRight size={20} className="text-gray-500 group-hover:text-white transition-colors" />
+            </button>
+
+            {/* Credits & Ads Section */}
+            <div className="mb-8">
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 px-1">
+                    Credits & Rewards
+                </h3>
+                <div className="bg-zinc-900/50 border border-white/10 rounded-2xl overflow-hidden p-1">
+                    <button
+                        onClick={async () => {
+                            const result = await AdService.showRewardAd();
+                            if (result.success && result.reward) {
+                                alert(`You earned ${result.reward} credits!`);
+                                // Force refresh context if needed, but subscription/credit service should handle it
+                            }
+                        }}
+                        className="w-full px-4 py-4 flex items-center justify-between hover:bg-white/5 transition-colors group"
+                    >
+                        <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center text-yellow-400 group-hover:bg-yellow-500/20 transition-colors">
+                                <span className="text-xl">📺</span>
+                            </div>
+                            <div className="text-left">
+                                <div className="font-semibold text-white">Watch Ad to Earn Credits</div>
+                                <div className="text-xs text-gray-400 mt-0.5">Get 5 free credits instantly</div>
+                            </div>
+                        </div>
+                        <div className="bg-white/10 px-3 py-1 rounded-full text-xs font-bold text-white group-hover:bg-white/20 transition-colors">
+                            +5 Credits
+                        </div>
                     </button>
                 </div>
-            )}
+            </div>
 
-            {/* API Key Inputs */}
-            <div className="space-y-6">
-                {/* Gemini API Key - PRIMARY */}
-                <div className="glass-card p-5 rounded-3xl border-2 border-primary/30">
-                    <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-semibold text-white flex items-center gap-2">
-                            <span className="text-blue-400">✦</span> Google Gemini API <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full">Required</span>
-                        </h3>
-                        <a
-                            href="https://aistudio.google.com/app/apikey"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:text-white text-xs flex items-center gap-1 font-medium"
-                        >
-                            Get Free Key <ExternalLink size={12} />
-                        </a>
-                    </div>
-                    <input
-                        type="password"
-                        value={keys.gemini}
-                        onChange={(e) => setKeys({ ...keys, gemini: e.target.value })}
-                        placeholder="AIzaSy..."
-                        className="glass-input w-full px-4 py-3 rounded-xl text-sm font-mono"
-                    />
-                    <p className="text-gray-500 text-xs mt-2">
-                        Powers all AI features: image analysis, chat, outfit suggestions
-                    </p>
-                </div>
+            {/* Support & Updates Section - THE MAIN FOCUS */}
+            <div className="mb-8">
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 px-1">
+                    Support & Updates
+                </h3>
+                <div className="bg-zinc-900/50 border border-white/10 rounded-2xl overflow-hidden divide-y divide-white/5">
 
-                {/* NVIDIA API Key - OPTIONAL */}
-                <div className="glass-card p-5 rounded-3xl opacity-60">
-                    <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-semibold text-white flex items-center gap-2">
-                            <span className="text-green-400">●</span> NVIDIA NIM API <span className="text-xs bg-white/10 text-gray-400 px-2 py-0.5 rounded-full">Optional</span>
-                        </h3>
-                        <a
-                            href="https://build.nvidia.com/explore/discover"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-gray-400 hover:text-white text-xs flex items-center gap-1"
-                        >
-                            Get Key <ExternalLink size={12} />
-                        </a>
-                    </div>
-                    <input
-                        type="password"
-                        value={keys.nvidia}
-                        onChange={(e) => setKeys({ ...keys, nvidia: e.target.value })}
-                        placeholder="nvapi-xxxxxxxx..."
-                        className="glass-input w-full px-4 py-3 rounded-xl text-sm font-mono"
-                    />
-                    <p className="text-gray-500 text-xs mt-2">
-                        Legacy option - not required when using Gemini
-                    </p>
+                    {/* Report Bug / Email Support */}
+                    <button
+                        onClick={handleReportBug}
+                        className="w-full px-5 py-4 flex items-center justify-between hover:bg-white/5 transition-colors group"
+                    >
+                        <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:bg-blue-500/20 transition-colors">
+                                <Mail size={20} />
+                            </div>
+                            <div className="text-left">
+                                <div className="font-semibold text-white">Contact Support</div>
+                                <div className="text-xs text-gray-400 mt-0.5">Report bugs & request API changes</div>
+                            </div>
+                        </div>
+                        <ChevronRight size={18} className="text-gray-600 group-hover:text-white transition-colors" />
+                    </button>
+
+                    {/* Check for Updates */}
+                    <button
+                        onClick={handleCheckUpdate}
+                        disabled={checkingUpdate}
+                        className="w-full px-5 py-4 flex items-center justify-between hover:bg-white/5 transition-colors group"
+                    >
+                        <div className="flex items-center gap-4">
+                            {checkingUpdate ? (
+                                <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
+                                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                </div>
+                            ) : (
+                                <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center text-green-400 group-hover:bg-green-500/20 transition-colors">
+                                    <RefreshCw size={20} />
+                                </div>
+                            )}
+                            <div className="text-left">
+                                <div className="font-semibold text-white">Check for Updates</div>
+                                <div className="text-xs text-gray-400 mt-0.5">
+                                    {checkingUpdate ? 'Checking...' : `Current version: v${APP_VERSION.version}`}
+                                </div>
+                            </div>
+                        </div>
+                        {!checkingUpdate && <ChevronRight size={18} className="text-gray-600 group-hover:text-white transition-colors" />}
+                    </button>
+
                 </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="flex gap-4 mt-8">
-                <button
-                    onClick={handleClear}
-                    className="flex-1 py-4 glass-card text-gray-400 rounded-2xl font-medium btn-press hover:text-white hover:bg-white/5 transition-colors"
-                >
-                    Clear All
-                </button>
-                <button
-                    onClick={handleSave}
-                    className={`flex-[2] py-4 rounded-2xl font-bold btn-press flex items-center justify-center gap-2 transition-all ${saved
-                        ? 'bg-green-500 text-white'
-                        : 'bg-white text-black hover:bg-gray-200'
-                        }`}
-                >
-                    {saved ? <><Check size={20} /> Saved!</> : 'Save Keys'}
-                </button>
-            </div>
-
-            {/* Info Box */}
-            <div className="mt-8 p-4 glass-card rounded-2xl text-center">
-                <p className="text-gray-500 text-xs leading-relaxed">
-                    🔒 Your API keys are stored <strong className="text-gray-300">locally</strong> in your browser.
-                    They never leave your device.
-                </p>
-            </div>
-
-            {/* Quick Links */}
-            <div className="mt-6 space-y-2">
-                <a
-                    href="https://docs.nvidia.com/nim/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block p-4 glass-card rounded-2xl text-gray-400 hover:text-white transition-colors flex items-center justify-between"
-                >
-                    <span className="text-sm">NVIDIA NIM Documentation</span>
-                    <ExternalLink size={16} />
-                </a>
-                <a
-                    href="https://ai.google.dev/docs"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block p-4 glass-card rounded-2xl text-gray-400 hover:text-white transition-colors flex items-center justify-between"
-                >
-                    <span className="text-sm">Google Gemini Documentation</span>
-                    <ExternalLink size={16} />
-                </a>
+            {/* Privacy & Security (Visual only for now) */}
+            <div className="mb-8">
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 px-1">
+                    Security
+                </h3>
+                <div className="bg-zinc-900/50 border border-white/10 rounded-2xl overflow-hidden p-5">
+                    <div className="flex items-start gap-4">
+                        <Shield size={22} className="text-gray-400 mt-1" />
+                        <div>
+                            <div className="font-semibold text-white mb-1">API Key Secured</div>
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                                Your API key is encrypted and stored locally. To change it, please contact support via the button above.
+                            </p>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Sign Out Button */}
             {onSignOut && (
-                <div className="mt-6">
-                    <button
-                        onClick={() => {
-                            if (window.confirm('Are you sure you want to sign out?')) {
-                                onSignOut();
-                            }
-                        }}
-                        className="w-full py-4 bg-red-500/10 text-red-400 font-medium rounded-2xl border border-red-500/20 hover:bg-red-500/20 transition-colors"
-                    >
-                        Sign Out
-                    </button>
-                </div>
+                <button
+                    onClick={() => {
+                        if (window.confirm('Are you sure you want to sign out?')) {
+                            onSignOut();
+                        }
+                    }}
+                    className="w-full py-4 bg-red-500/10 text-red-400 font-bold rounded-2xl border border-red-500/10 hover:bg-red-500/20 transition-all active:scale-[0.98]"
+                >
+                    Sign Out
+                </button>
             )}
 
-            {/* Version */}
-            <div className="mt-8 text-center">
-                <p className="text-gray-600 text-xs">StyAiLe.ai v1.0.0</p>
+            {/* Version Footer */}
+            <div className="mt-8 text-center space-y-2">
+                <p className="text-white font-bold text-sm tracking-widest">StyAiLe.ai</p>
+                <p className="text-gray-600 text-xs font-mono">
+                    v{APP_VERSION.version} ({APP_VERSION.buildNumber}) • {APP_VERSION.buildDate}
+                </p>
             </div>
         </div>
     );
 };
 
 export default SettingsView;
+

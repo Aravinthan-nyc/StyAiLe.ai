@@ -88,9 +88,21 @@ export async function signOut(): Promise<{ error: AuthError | null }> {
  */
 export async function getCurrentUser(): Promise<User | null> {
     try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user }, error } = await supabase.auth.getUser();
+        if (error) {
+            // Silently handle network errors
+            if (error.message?.includes('fetch') || error.message?.includes('network')) {
+                console.warn('Unable to connect to authentication server. Working offline.');
+                return null;
+            }
+            throw error;
+        }
         return user;
-    } catch {
+    } catch (e: any) {
+        // Suppress network-related errors in console
+        if (e.message?.includes('fetch') || e.message?.includes('Failed to fetch')) {
+            console.warn('Authentication service unavailable. App will work in offline mode.');
+        }
         return null;
     }
 }
@@ -100,9 +112,20 @@ export async function getCurrentUser(): Promise<User | null> {
  */
 export async function getCurrentSession(): Promise<Session | null> {
     try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+            // Silently handle network errors
+            if (error.message?.includes('fetch') || error.message?.includes('network')) {
+                return null;
+            }
+            throw error;
+        }
         return session;
-    } catch {
+    } catch (e: any) {
+        // Suppress network-related errors
+        if (e.message?.includes('fetch') || e.message?.includes('Failed to fetch')) {
+            // Silent fail for offline mode
+        }
         return null;
     }
 }

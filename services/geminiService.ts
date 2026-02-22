@@ -1,16 +1,9 @@
-import { GoogleGenAI } from "@google/genai";
+import { supabase } from "./supabaseClient";
 import { ClothingCategory, WardrobeItem, OutfitSuggestion } from "../types";
 
-const API_KEY = process.env.GEMINI_API_KEY || "";
+// API Key is now handled securely on the server (Supabase Edge Function)
+// API Key is now handled securely on the server (Supabase Edge Function)
 
-// Log API key status for debugging (never log the actual key)
-if (!API_KEY) {
-    console.error("GEMINI_API_KEY is not set! Please add it to .env.local file.");
-} else {
-    console.log("Gemini API key loaded successfully (length:", API_KEY.length, ")");
-}
-
-const genAI = new GoogleGenAI({ apiKey: API_KEY });
 
 // Models to try in order (fallback chain)
 const MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
@@ -51,28 +44,72 @@ async function retryWithBackoff<T>(
 /**
  * Try generating content with fallback models
  */
+/**
+ * Call the secure Supabase Edge Function to generate content
+ */
 async function generateWithFallback(config: any): Promise<any> {
-    let lastError: any;
+    try {
+        console.log("Invoking secure AI function...");
 
-    for (const model of MODELS) {
-        try {
-            console.log(`Trying model: ${model}`);
-            const response = await genAI.models.generateContent({
-                ...config,
-                model
+        // Extract prompt from config (simplified for this implementation)
+        const prompt = config.contents?.[0]?.parts?.[0]?.text;
+        const imageData = config.contents?.[0]?.parts?.[1]?.inlineData?.data;
+
+        // Call Supabase Function
+        // OPTIMIZATION: Use GET for 'chat' type to enable CDN caching
+        const isGet = config.type === 'chat' || config.type === 'trends';
+        const method = isGet ? 'GET' : 'POST';
+
+        let responseData;
+
+        if (isGet) {
+            // Construct Query Params for CDN Cache Key
+            const params = new URLSearchParams({
+                model: 'gemini-1.5-flash',
+                prompt: prompt || "",
+                cost: "1",
+                provider: 'gemini',
+                type: config.type || 'chat'
             });
-            return response;
-        } catch (error: any) {
-            lastError = error;
-            console.warn(`Model ${model} failed:`, error?.message);
 
-            // If it's not a model-not-found error, don't try other models
-            if (!error?.message?.includes("404") && !error?.message?.includes("not found")) {
-                throw error;
-            }
+            // Note: We use fetch directly for GET because supabase.functions.invoke often defaults to POST
+            // or we need specific control over the URL construction for caching
+            const { data, error } = await supabase.functions.invoke(`generate-outfit?${params.toString()}`, {
+                method: 'GET'
+            });
+
+            if (error) throw error;
+            responseData = data;
+
+        } else {
+            // Standard POST for private data (Images, Wardrobe)
+            const { data, error } = await supabase.functions.invoke('generate-outfit', {
+                body: {
+                    model: 'gemini-1.5-flash',
+                    prompt: prompt,
+                    imageData: imageData,
+                    cost: 1,
+                    type: config.type || 'outfit'
+                }
+            });
+
+            if (error) throw error;
+            responseData = data;
         }
+
+        const data = responseData;
+
+        // Error handling is done inside the if/else blocks above
+
+        // Map response to match Gemini SDK format so rest of code works
+        return {
+            text: data.candidates?.[0]?.content?.parts?.[0]?.text || ""
+        };
+
+    } catch (error: any) {
+        console.error("AI Function Error:", error);
+        throw error;
     }
-    throw lastError;
 }
 
 interface ClothingAnalysis {
@@ -444,7 +481,8 @@ Be encouraging about their wardrobe choices and give practical fashion advice.`;
 
     try {
         const response = await retryWithBackoff(() => generateWithFallback({
-            contents
+            contents,
+            type: 'chat' // Flag as cacheable
         }));
 
         return response.text || "I'm here to help with your style questions!";
