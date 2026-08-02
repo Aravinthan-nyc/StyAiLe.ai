@@ -1,20 +1,35 @@
-# Wardrobe Collection Assistant
+StyAILe.ai
+AI-powered Smart Wardrobe Assistant
 
-An AI-powered wardrobe management app that helps users catalog their clothes
-and get outfit recommendations based on occasion, style, and season.
+Overview
 
-## Features
-- Upload clothing images
-- Automatic clothing analysis
-- Organized digital wardrobe
-- Smart outfit suggestions (WIP)
+Problem
+Managing clothing collections and choosing outfits can be difficult.
 
-## Tech Stack
-- Frontend: Vite + React
-- AI: Gemini / Claude (vision)
-- Backend: Node.js
+Solution
+StyAILe.ai uses AI vision models to analyze clothing images and recommend outfits based on style, season, and occasion.
 
-## Setup
-```bash
-npm install
-npm run dev
+Features
+- Image upload
+- Clothing analysis
+- Digital wardrobe
+- Outfit recommendations
+- Responsive UI
+
+Tech Stack
+Frontend
+- React
+- Vite
+
+Backend
+- Node.js
+
+AI
+- Gemini Vision
+- Claude Vision
+
+Future Work
+- User authentication
+- Calendar integration
+- Weather-aware recommendations
+- Mobile application
